@@ -10,7 +10,7 @@ Private, read-only OKX finance server for Cloudflare Workers.
 - `MCP_TOKEN`
 - `OKX_PAY_ADDRESS`
 
-Do not commit any secret values.
+Do not commit any secret values!
 
 ## Install / deploy
 
