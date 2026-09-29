@@ -1,18 +1,1 @@
-{
-  "name": "okx-finance-mcp",
-  "version": "3.0.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/server": "2.0.0",
-    "agents": "^0.20.0",
-    "zod": "^4.0.0"
-  },
-  "devDependencies": {
-    "wrangler": "^4.68.0"
-  }
-}
+{"description":"OKX US read-only finance proxy (Cloudflare Worker)","name":"okx-finance","private":true,"scripts":{"deploy":"wrangler deploy","dev":"wrangler dev"},"version":"2.0.3"}

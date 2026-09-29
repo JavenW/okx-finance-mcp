@@ -1,0 +1,17 @@
+# Cloudflare Worker: okx-finance
+# OKX US read-only finance proxy. Secrets are set in the dashboard
+# (Settings -> Variables and Secrets), never in this repo.
+
+name = "okx-finance"
+main = "src/worker.js"
+compatibility_date = "2026-09-28"
+
+# Required secrets (wrangler secret put <NAME>  or dashboard):
+#   OKX_API_KEY       - OKX API key (Read permission only)
+#   OKX_SECRET_KEY    - OKX API secret
+#   OKX_PASSPHRASE    - OKX API passphrase
+#   MCP_TOKEN         - Bearer token callers must present. Must be identical
+#                       to the token registered in Muse's secure connector.
+# Optional secrets:
+#   OKX_PAY_ADDRESS   - X Layer address for /pay/balance (USDG). When unset,
+#                       /portfolio and /balances still work; pay is null.
