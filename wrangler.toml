@@ -2,7 +2,7 @@
 # OKX US read-only finance proxy. Secrets are set in the dashboard
 # (Settings -> Variables and Secrets), never in this repo.
 
-name = "okx-finance"
+name = "okx-finance-mcp"
 main = "src/worker.js"
 compatibility_date = "2026-09-28"
 
