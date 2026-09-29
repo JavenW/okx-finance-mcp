@@ -406,13 +406,13 @@ function json(data, status = 200) {
   });
 }
 
-function badRequest(msg) {
-  return json({ ok: false, error: msg }, 400);
-}
-
 function parseQuery(url) {
   const q = Object.fromEntries(new URL(url).searchParams.entries());
-  if (q.history === "true" || q.history === "1") q.history = true;
+  // Normalize history to a real boolean: only "true"/"1" mean true.
+  // (Without this, history=false would stay the truthy string "false".)
+  if (q.history !== undefined) {
+    q.history = q.history === "true" || q.history === "1";
+  }
   return q;
 }
 
