@@ -20,7 +20,7 @@ OKX US 只读财务代理（Cloudflare Worker）。OKX 的 API Key/Secret/Passph
    | `OKX_SECRET_KEY` | 是 | OKX Secret Key |
    | `OKX_PASSPHRASE` | 是 | OKX Passphrase |
    | `MCP_TOKEN` | 是 | 调用方 Bearer token，40 位以上随机字符 |
-   | `OKX_PAY_ADDRESS` | 否 | X Layer 地址（查 USDG 用）；不填则 pay 为 null |
+   | `OKX_PAY_ADDRESS` | 否 | X Layer 地址（查 OKB + USDG/USDT/USDC）；不填则 pay 为 null |
 
    ⚠️ `MCP_TOKEN` 必须和之后填给 Muse 安全连接器的那一串**完全一致**，
    两边对不上会报 401。
@@ -46,7 +46,7 @@ OKX US 只读财务代理（Cloudflare Worker）。OKX 的 API Key/Secret/Passph
 | `/withdrawals` | 提现记录 |
 | `/trades` | 成交记录（近 3 个月）。`instType` 可选，不填则聚合 SPOT/MARGIN/SWAP/FUTURES/OPTION |
 | `/positions` | 当前持仓 |
-| `/pay/balance` | X Layer USDG 余额（需配 `OKX_PAY_ADDRESS`） |
+| `/pay/balance` | X Layer 余额（OKB + USDG/USDT/USDC，需配 `OKX_PAY_ADDRESS`） |
 
 通用分页参数：`after` / `before`（毫秒时间戳）、`limit`（最大 100）。
 上游 OKX 报错时本 Worker 返回 **502**（便于区分是 Worker 自身问题还是上游问题）。

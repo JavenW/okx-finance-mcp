@@ -25,7 +25,10 @@
  *     total USD valuation (funding + trading + earn + classic). /account-summary
  *     includes it when available (null if the OKX US entity does not support it).
  *  5. OKX_PAY_ADDRESS is optional: /portfolio and /balances work without it;
- *     only /pay/balance reports "not configured".
+ *     only /pay/balance reports "not configured". Pay balances are read from
+ *     the X Layer public RPC (eth_getBalance + balanceOf on known OKX Pay
+ *     tokens USDG/USDT/USDC); a pay lookup failure degrades to pay:null
+ *     (+payError) on aggregate routes instead of failing them.
  *  6. Upstream OKX / X Layer errors surface as HTTP 502 (not 500), so worker
  *     bugs are distinguishable from upstream failures.
  *
@@ -256,34 +259,94 @@ async function getValuation(env, ccy = "USD") {
   };
 }
 
-async function getPayBalance(env) {
-  // Pay address is optional: portfolio/balances still work without it,
-  // only the pay section will be null.
-  if (!env.OKX_PAY_ADDRESS) return null;
-  const res = await fetch(
-    "https://www.okx.com/api/v5/xlayer/account/balance?address=" +
-      encodeURIComponent(env.OKX_PAY_ADDRESS) +
-      "&tokenContractAddress=0xcdf25a9783d844c1ed8d0b4ecfc4e2a33a8d330b",
-    { headers: { "Content-Type": "application/json" } }
-  );
+/* ------------------------------------------------------------------ */
+/* OKX Pay balance via X Layer public RPC                              */
+/* ------------------------------------------------------------------ */
+
+const XLAYER_RPC = "https://rpc.xlayer.tech";
+
+// Known OKX Pay tokens on X Layer (chain id 196). Source: OKX's official
+// okx/payments repo (networks & assets table), verified on-chain.
+const PAY_TOKENS = [
+  { symbol: "USDG", contract: "0x4ae46a509f6b1d9056937ba4500cb143933d2dc8", decimals: 6 },
+  { symbol: "USDT", contract: "0x779ded0c9e1022225f8e0630b35a9b54be713736", decimals: 6 },
+  { symbol: "USDC", contract: "0x74b7f16337b8972027f6196a17a631ac6de26d22", decimals: 6 },
+];
+
+async function xlayerRpc(method, params) {
+  const res = await fetch(XLAYER_RPC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
   const body = await res.json().catch(() => ({}));
-  const entry =
-    body?.data?.tokenBalanceList?.find(
-      (t) => t.tokenContractAddress === "0xcdf25a9783d844c1ed8d0b4ecfc4e2a33a8d330b"
-    ) || body?.data?.tokenBalanceList?.[0];
-  if (!entry) {
+  if (body.error) {
     const err = new Error(
-      `X Layer balance lookup failed: ${body.msg || res.statusText}`
+      `X Layer RPC error: ${body.error.message || "code " + body.error.code}`
     );
     err.upstream = true;
     throw err;
   }
+  return body.result;
+}
+
+function hexToBigInt(hex) {
+  if (typeof hex !== "string" || !/^0x[0-9a-fA-F]+$/.test(hex)) return 0n;
+  return BigInt(hex);
+}
+
+// Exact decimal formatting without float precision loss.
+function formatUnits(raw, decimals) {
+  const s = raw.toString().padStart(decimals + 1, "0");
+  const head = s.slice(0, -decimals);
+  const tail = s.slice(-decimals).replace(/0+$/, "");
+  return tail ? `${head}.${tail}` : head;
+}
+
+async function getPayBalance(env) {
+  // Pay address is optional: aggregate routes still work without it,
+  // only the pay section will be null.
+  if (!env.OKX_PAY_ADDRESS) return null;
+  const addr = env.OKX_PAY_ADDRESS;
+  const balOfData =
+    "0x70a08231" +
+    "000000000000000000000000" +
+    addr.toLowerCase().replace(/^0x/, "");
+  const [nativeHex, ...tokenHexes] = await Promise.all([
+    xlayerRpc("eth_getBalance", [addr, "latest"]),
+    ...PAY_TOKENS.map((t) =>
+      xlayerRpc("eth_call", [{ to: t.contract, data: balOfData }, "latest"])
+    ),
+  ]);
+  const nativeRaw = hexToBigInt(nativeHex);
   return {
-    asset: entry.symbol || "USDG",
-    balance: entry.balance,
+    address: addr,
     chain: "X Layer",
-    address: env.OKX_PAY_ADDRESS,
+    native: {
+      symbol: "OKB",
+      balance: formatUnits(nativeRaw, 18),
+      raw: nativeRaw.toString(),
+    },
+    tokens: PAY_TOKENS.map((t, i) => {
+      const raw = hexToBigInt(tokenHexes[i]);
+      return {
+        symbol: t.symbol,
+        contract: t.contract,
+        decimals: t.decimals,
+        balance: formatUnits(raw, t.decimals),
+        raw: raw.toString(),
+      };
+    }).filter((t) => t.raw !== "0"),
   };
+}
+
+// A pay lookup must never take down aggregate routes.
+async function settlePay(env) {
+  try {
+    return { pay: await getPayBalance(env), payError: null };
+  } catch (e) {
+    return { pay: null, payError: e.message || String(e) };
+  }
 }
 
 function mapFill(f) {
@@ -334,10 +397,10 @@ async function getPositions(env) {
 }
 
 async function getPortfolio(env) {
-  const [trading, funding, pay] = await Promise.all([
+  const [trading, funding, { pay, payError }] = await Promise.all([
     getTradingBalance(env),
     getFundingBalances(env),
-    getPayBalance(env),
+    settlePay(env),
   ]);
   return {
     ts: new Date().toISOString(),
@@ -351,15 +414,9 @@ async function getPortfolio(env) {
         // for the real USD total instead of inventing one.
         balances: funding,
       },
-      pay: pay
-        ? {
-            asset: pay.asset,
-            balance: pay.balance,
-            chain: pay.chain,
-            address: pay.address,
-          }
-        : null,
+      pay,
     },
+    ...(payError ? { payError } : {}),
   };
 }
 
@@ -383,13 +440,8 @@ async function getAccountSummary(env) {
       currencyCount: funding.length,
       balances: funding,
     },
-    pay: portfolio.accounts.pay
-      ? {
-          asset: portfolio.accounts.pay.asset,
-          balance: portfolio.accounts.pay.balance,
-          chain: portfolio.accounts.pay.chain,
-        }
-      : null,
+    pay: portfolio.accounts.pay,
+    ...(portfolio.payError ? { payError: portfolio.payError } : {}),
     // Real USD total (funding + trading + earn + classic) straight from OKX.
     valuation,
   };
@@ -428,7 +480,7 @@ async function handleRequest(request, env) {
     return json({
       ok: true,
       service: "okx-finance",
-      version: "2.0.3",
+      version: "2.0.4",
       routes: ROUTES,
       auth: "Authorization: Bearer <MCP_TOKEN>",
       readOnly: true,
@@ -453,12 +505,15 @@ async function handleRequest(request, env) {
         return json({ ok: true, data: await getPortfolio(env) });
 
       case "/balances": {
-        const [trading, funding, pay] = await Promise.all([
+        const [trading, funding, { pay, payError }] = await Promise.all([
           getTradingBalance(env),
           getFundingBalances(env),
-          getPayBalance(env),
+          settlePay(env),
         ]);
-        return json({ ok: true, data: { trading, funding, pay } });
+        return json({
+          ok: true,
+          data: { trading, funding, pay, ...(payError ? { payError } : {}) },
+        });
       }
 
       case "/valuation":
